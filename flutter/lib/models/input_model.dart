@@ -758,8 +758,16 @@ class InputModel {
         isDesktop || (isWebDesktop && keyboardMode == kKeyMapMode);
     if (isMobileAndMapMode || isDesktopAndMapMode) {
       // FIXME: e.character is wrong for dead keys, eg: ^ in de
+      // NelDesk fix: on iOS + Magic Keyboard, spacebar sends e.character == null or ''
+      // because iPadOS intercepts the space key. Use logicalKey.keyLabel as fallback
+      // so the space reaches the remote Mac correctly.
+      String character = e.character ?? '';
+      if (isIOS && character.isEmpty &&
+          e.physicalKey == PhysicalKeyboardKey.space) {
+        character = ' ';
+      }
       newKeyboardMode(
-          e.character ?? '',
+          character,
           e.physicalKey.usbHidUsage & 0xFFFF,
           // Show repeat event be converted to "release+press" events?
           e is KeyDownEvent || e is KeyRepeatEvent,
