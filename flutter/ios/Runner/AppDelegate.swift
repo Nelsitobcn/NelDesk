@@ -60,7 +60,7 @@ import AVFoundation
 // Channel "neldesk/dictation": start -> true | error, stop -> true.
 // Native -> Dart: "partial"(text) while speaking, "phrase"(text) to type.
 final class NelDictation {
-  private static let pause: TimeInterval = 1.5
+  private static let pause: TimeInterval = 1.0
   private let channel: FlutterMethodChannel
   private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-ES"))
   // Created per dictation, after the session switches to record: an engine made
