@@ -44,7 +44,6 @@ class NelKeyBar {
 class NelDictation {
   static const _channel = MethodChannel('neldesk/dictation');
   static final RxBool listening = false.obs;
-  static final RxString partial = ''.obs;
   static var _handlerSet = false;
   // Text of the current phrase already typed on the remote computer.
   static var _typed = '';
@@ -82,12 +81,10 @@ class NelDictation {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'partial') {
         final t = call.arguments as String? ?? '';
-        partial.value = t;
         // Type every word but the last one, which may still change.
         final cut = t.lastIndexOf(' ');
         if (cut > 0) _sync(t.substring(0, cut + 1));
       } else if (call.method == 'phrase') {
-        partial.value = '';
         final t = (call.arguments as String? ?? '').trim();
         if (t.isNotEmpty) _sync('$t ');
         _typed = '';
@@ -100,11 +97,9 @@ class NelDictation {
     if (listening.value) {
       await _channel.invokeMethod('stop');
       listening.value = false;
-      partial.value = '';
       return;
     }
     try {
-      partial.value = '';
       _typed = '';
       await _channel.invokeMethod('start');
       listening.value = true;
@@ -169,14 +164,11 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
     final cmdLabel = isMac ? '⌘ Cmd' : 'Win';
     final children = <Widget>[
       Obx(() {
+        // The text shows up on the Mac as it is typed; the button only
+        // tells whether the mic is on (Nelson, 24-sep-2026).
         final on = NelDictation.listening.value;
-        final p = NelDictation.partial.value;
-        final label = !on
-            ? '🎤 Dictar'
-            : (p.isEmpty
-                ? '● Escuchando… (toca para parar)'
-                : '● ${p.length > 28 ? '…${p.substring(p.length - 28)}' : p}');
-        return _btn(label, NelDictation.toggle,
+        return _btn(on ? '● Escuchando (toca para parar)' : '🎤 Dictar',
+            NelDictation.toggle,
             color: on ? const Color(0xCCD32F2F) : const Color(0x6600A86B));
       }),
       _sep(),
