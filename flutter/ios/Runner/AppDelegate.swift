@@ -53,13 +53,14 @@ import AVFoundation
   }
 }
 
-// NelDesk: one-tap dictation. While controlling the Mac there is no text field,
-// so the iPadOS dictation mic never shows up. This listens with the Speech
-// framework (Spanish) and hands the text to Flutter, which types it on the Mac.
-// Channel "neldesk/dictation": start -> true | error, stop -> final text.
-// Native -> Dart: "partial"(text) while listening, "ended"(text) if iOS stops
-// by itself (errors, ~1 min limit). The final text is delivered exactly once.
+// NelDesk: continuous dictation. While controlling the Mac there is no text
+// field, so the iPadOS dictation mic never shows up. This listens with the
+// Speech framework (Spanish) and, after each short pause, hands the phrase to
+// Flutter, which types it on the Mac. It keeps listening until "stop".
+// Channel "neldesk/dictation": start -> true | error, stop -> true.
+// Native -> Dart: "partial"(text) while speaking, "phrase"(text) to type.
 final class NelDictation {
+  private static let pause: TimeInterval = 1.5
   private let channel: FlutterMethodChannel
   private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-ES"))
   // Created per dictation, after the session switches to record: an engine made
@@ -68,9 +69,10 @@ final class NelDictation {
   private var audioEngine: AVAudioEngine?
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
+  private var generation = 0
   private var lastText = ""
-  private var pendingStop: FlutterResult?
-  private var delivered = true
+  private var silenceTimer: Timer?
+  private var active = false
   private var previousCategory: AVAudioSession.Category?
   private var previousMode: AVAudioSession.Mode?
   private var previousOptions: AVAudioSession.CategoryOptions = []
@@ -81,7 +83,10 @@ final class NelDictation {
       guard let self = self else { return }
       switch call.method {
       case "start": self.start(result)
-      case "stop": self.stop(result)
+      case "stop":
+        self.commitPhrase(restart: false)
+        self.teardown()
+        result(true)
       default: result(FlutterMethodNotImplemented)
       }
     }
@@ -127,13 +132,6 @@ final class NelDictation {
                             options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
     try session.setActive(true, options: .notifyOthersOnDeactivation)
 
-    let req = SFSpeechAudioBufferRecognitionRequest()
-    req.shouldReportPartialResults = true
-    if #available(iOS 16.0, *) { req.addsPunctuation = true }
-    request = req
-    lastText = ""
-    delivered = false
-
     let engine = AVAudioEngine()
     audioEngine = engine
     let input = engine.inputNode
@@ -142,45 +140,64 @@ final class NelDictation {
       throw NSError(domain: "NelDictation", code: 2,
                     userInfo: [NSLocalizedDescriptionKey: "El micrófono no está disponible"])
     }
+    active = true
+    startRecognition(recognizer)
     // nil format = the node's own format, so it always matches the hardware.
-    input.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
-      req.append(buffer)
+    input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
+      self?.request?.append(buffer)
     }
     engine.prepare()
     try engine.start()
+  }
 
+  // One recognition task per phrase: also avoids the ~1 min limit per task.
+  private func startRecognition(_ recognizer: SFSpeechRecognizer) {
+    generation += 1
+    let gen = generation
+    let req = SFSpeechAudioBufferRecognitionRequest()
+    req.shouldReportPartialResults = true
+    if #available(iOS 16.0, *) { req.addsPunctuation = true }
+    request = req
+    lastText = ""
     task = recognizer.recognitionTask(with: req) { [weak self] res, err in
       DispatchQueue.main.async {
-        guard let self = self else { return }
+        guard let self = self, self.active, gen == self.generation else { return }
         if let res = res {
-          self.lastText = res.bestTranscription.formattedString
-          if !res.isFinal { self.channel.invokeMethod("partial", arguments: self.lastText) }
+          let text = res.bestTranscription.formattedString
+          if !text.isEmpty {
+            self.lastText = text
+            self.channel.invokeMethod("partial", arguments: text)
+            self.silenceTimer?.invalidate()
+            self.silenceTimer = Timer.scheduledTimer(withTimeInterval: NelDictation.pause,
+                                                     repeats: false) { [weak self] _ in
+              self?.commitPhrase(restart: true)
+            }
+          }
+          if res.isFinal { self.commitPhrase(restart: true) }
+        } else if err != nil {
+          // Nothing heard / recognizer hiccup: listen again shortly.
+          self.commitPhrase(restart: false)
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, self.active, gen == self.generation,
+                  let r = self.recognizer else { return }
+            self.task?.cancel()
+            self.startRecognition(r)
+          }
         }
-        if err != nil || (res?.isFinal ?? false) { self.finish() }
       }
     }
   }
 
-  private func stop(_ result: @escaping FlutterResult) {
-    if delivered { result(""); return }
-    pendingStop = result
-    stopEngine()
-    request?.endAudio()
-    // Give the recognizer a moment to settle the last words.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.finish() }
-  }
-
-  private func finish() {
-    if delivered { return }
-    delivered = true
+  private func commitPhrase(restart: Bool) {
+    silenceTimer?.invalidate()
+    silenceTimer = nil
     let text = lastText
-    if let r = pendingStop {
-      pendingStop = nil
-      r(text)
-    } else {
-      channel.invokeMethod("ended", arguments: text)
+    lastText = ""
+    if !text.isEmpty { channel.invokeMethod("phrase", arguments: text) }
+    if restart, active, let r = recognizer {
+      task?.cancel()
+      startRecognition(r)
     }
-    teardown()
   }
 
   private func stopEngine() {
@@ -191,7 +208,12 @@ final class NelDictation {
   }
 
   private func teardown() {
+    active = false
+    generation += 1
+    silenceTimer?.invalidate()
+    silenceTimer = nil
     stopEngine()
+    request?.endAudio()
     task?.cancel()
     task = nil
     request = nil

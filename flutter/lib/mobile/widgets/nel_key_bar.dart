@@ -36,8 +36,9 @@ class NelKeyBar {
   }
 }
 
-/// One-tap dictation (native side: NelDictation in ios/Runner/AppDelegate.swift).
-/// Tap to listen, tap again to type the recognized text on the remote computer.
+/// Continuous dictation (native side: NelDictation in ios/Runner/AppDelegate.swift).
+/// Tap to start listening; each phrase is typed on the remote computer after a
+/// short pause. Tap again to stop.
 class NelDictation {
   static const _channel = MethodChannel('neldesk/dictation');
   static final RxBool listening = false.obs;
@@ -50,9 +51,12 @@ class NelDictation {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'partial') {
         partial.value = call.arguments as String? ?? '';
-      } else if (call.method == 'ended') {
-        // iOS stopped by itself (silence limit, error): type what we have.
-        _deliver(call.arguments as String? ?? '');
+      } else if (call.method == 'phrase') {
+        partial.value = '';
+        final t = (call.arguments as String? ?? '').trim();
+        if (t.isNotEmpty) {
+          bind.sessionInputString(sessionId: gFFI.sessionId, value: '$t ');
+        }
       }
     });
   }
@@ -60,8 +64,9 @@ class NelDictation {
   static Future<void> toggle() async {
     _ensureHandler();
     if (listening.value) {
-      final text = await _channel.invokeMethod<String>('stop') ?? '';
-      _deliver(text);
+      await _channel.invokeMethod('stop');
+      listening.value = false;
+      partial.value = '';
       return;
     }
     try {
@@ -71,14 +76,6 @@ class NelDictation {
     } on PlatformException catch (e) {
       showToast(e.message ?? 'No se pudo empezar a dictar');
     }
-  }
-
-  static void _deliver(String text) {
-    listening.value = false;
-    partial.value = '';
-    final t = text.trim();
-    if (t.isEmpty) return;
-    bind.sessionInputString(sessionId: gFFI.sessionId, value: '$t ');
   }
 }
 
@@ -142,7 +139,7 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
         final label = !on
             ? '🎤 Dictar'
             : (p.isEmpty
-                ? '● Escuchando…'
+                ? '● Escuchando… (toca para parar)'
                 : '● ${p.length > 28 ? '…${p.substring(p.length - 28)}' : p}');
         return _btn(label, NelDictation.toggle,
             color: on ? const Color(0xCCD32F2F) : const Color(0x6600A86B));
