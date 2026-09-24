@@ -4,6 +4,7 @@
 // Cmd+Tab and Cmd+Space for itself, so they are offered here as buttons.
 // Modifiers are one-shot: tap "Cmd" then "Tab" sends Cmd+Tab and Cmd turns off.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../../common.dart';
@@ -32,6 +33,52 @@ class NelKeyBar {
       CanvasModel.nelTopInset = inset;
       gFFI.canvasModel.updateViewStyle();
     }
+  }
+}
+
+/// One-tap dictation (native side: NelDictation in ios/Runner/AppDelegate.swift).
+/// Tap to listen, tap again to type the recognized text on the remote computer.
+class NelDictation {
+  static const _channel = MethodChannel('neldesk/dictation');
+  static final RxBool listening = false.obs;
+  static final RxString partial = ''.obs;
+  static var _handlerSet = false;
+
+  static void _ensureHandler() {
+    if (_handlerSet) return;
+    _handlerSet = true;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'partial') {
+        partial.value = call.arguments as String? ?? '';
+      } else if (call.method == 'ended') {
+        // iOS stopped by itself (silence limit, error): type what we have.
+        _deliver(call.arguments as String? ?? '');
+      }
+    });
+  }
+
+  static Future<void> toggle() async {
+    _ensureHandler();
+    if (listening.value) {
+      final text = await _channel.invokeMethod<String>('stop') ?? '';
+      _deliver(text);
+      return;
+    }
+    try {
+      partial.value = '';
+      await _channel.invokeMethod('start');
+      listening.value = true;
+    } on PlatformException catch (e) {
+      showToast(e.message ?? 'No se pudo empezar a dictar');
+    }
+  }
+
+  static void _deliver(String text) {
+    listening.value = false;
+    partial.value = '';
+    final t = text.trim();
+    if (t.isEmpty) return;
+    bind.sessionInputString(sessionId: gFFI.sessionId, value: '$t ');
   }
 }
 
@@ -89,6 +136,18 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
     final isMac = gFFI.ffiModel.pi.platform == kPeerPlatformMacOS;
     final cmdLabel = isMac ? '⌘ Cmd' : 'Win';
     final children = <Widget>[
+      Obx(() {
+        final on = NelDictation.listening.value;
+        final p = NelDictation.partial.value;
+        final label = !on
+            ? '🎤 Dictar'
+            : (p.isEmpty
+                ? '● Escuchando…'
+                : '● ${p.length > 28 ? '…${p.substring(p.length - 28)}' : p}');
+        return _btn(label, NelDictation.toggle,
+            color: on ? const Color(0xCCD32F2F) : const Color(0x6600A86B));
+      }),
+      _sep(),
       _btn('Esc', () => _key('VK_ESCAPE')),
       _btn('Tab', () => _key('VK_TAB')),
       _sep(),
@@ -125,6 +184,7 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
         _btn('⌘Z', () => _combo('VK_Z', command: true)),
         _sep(),
       ],
+      _sep(),
       _btn('Soltar teclas', () {
         inputModel.releaseAllPressedKeys();
         setState(() {});
