@@ -62,7 +62,10 @@ import AVFoundation
 final class NelDictation {
   private let channel: FlutterMethodChannel
   private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-ES"))
-  private let audioEngine = AVAudioEngine()
+  // Created per dictation, after the session switches to record: an engine made
+  // while the session was playback-only has an input with no format (0 Hz) and
+  // installTap raises an uncatchable NSException (crash 24-sep-2026).
+  private var audioEngine: AVAudioEngine?
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
   private var lastText = ""
@@ -131,12 +134,20 @@ final class NelDictation {
     lastText = ""
     delivered = false
 
-    let input = audioEngine.inputNode
-    input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+    let engine = AVAudioEngine()
+    audioEngine = engine
+    let input = engine.inputNode
+    let hwFormat = input.inputFormat(forBus: 0)
+    guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
+      throw NSError(domain: "NelDictation", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "El micrófono no está disponible"])
+    }
+    // nil format = the node's own format, so it always matches the hardware.
+    input.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
       req.append(buffer)
     }
-    audioEngine.prepare()
-    try audioEngine.start()
+    engine.prepare()
+    try engine.start()
 
     task = recognizer.recognitionTask(with: req) { [weak self] res, err in
       DispatchQueue.main.async {
@@ -153,8 +164,7 @@ final class NelDictation {
   private func stop(_ result: @escaping FlutterResult) {
     if delivered { result(""); return }
     pendingStop = result
-    audioEngine.stop()
-    audioEngine.inputNode.removeTap(onBus: 0)
+    stopEngine()
     request?.endAudio()
     // Give the recognizer a moment to settle the last words.
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.finish() }
@@ -173,9 +183,15 @@ final class NelDictation {
     teardown()
   }
 
+  private func stopEngine() {
+    guard let engine = audioEngine else { return }
+    audioEngine = nil
+    engine.stop()
+    engine.inputNode.removeTap(onBus: 0)
+  }
+
   private func teardown() {
-    if audioEngine.isRunning { audioEngine.stop() }
-    audioEngine.inputNode.removeTap(onBus: 0)
+    stopEngine()
     task?.cancel()
     task = nil
     request = nil
