@@ -2223,6 +2223,10 @@ class CanvasModel with ChangeNotifier {
   static double get bottomToEdge =>
       isDesktop ? windowBorderWidth + kDragToResizeAreaPadding.bottom : 0;
 
+  // NelDesk: height of the key bar pinned at the top on mobile. The canvas is
+  // laid out below it instead of being covered (keeps the Mac menu bar visible).
+  static double nelTopInset = 0;
+
   Size getSize() {
     final mediaData = MediaQueryData.fromView(ui.window);
     final size = mediaData.size;
@@ -2235,6 +2239,7 @@ class CanvasModel with ChangeNotifier {
       // Vertically, subtract the bottom keyboard inset (viewInsets.bottom) and any
       // bottom overlay (e.g. key-help tools) so the canvas is not covered.
       h = h -
+          nelTopInset -
           mediaData.viewInsets.bottom -
           (parent.target?.cursorModel.keyHelpToolsRectToAdjustCanvas?.bottom ??
               0);
@@ -2337,6 +2342,7 @@ class CanvasModel with ChangeNotifier {
     _x = (size.width - displayWidth * _scale) / 2;
     _y = (size.height - displayHeight * _scale) / 2;
     if (isMobile) {
+      _y += nelTopInset;
       _moveToCenterCursor();
     }
   }
@@ -2720,8 +2726,10 @@ class CanvasModel with ChangeNotifier {
     }
     final maxX = 0.0;
     final minX = _size.width + (imageRect.left - imageRect.right) * _scale;
-    final maxY = 0.0;
-    final minY = _size.height + (imageRect.top - imageRect.bottom) * _scale;
+    final maxY = nelTopInset;
+    final minY = nelTopInset +
+        _size.height +
+        (imageRect.top - imageRect.bottom) * _scale;
     Offset offsetToCenter =
         parent.target?.cursorModel.getCanvasOffsetToCenterCursor() ??
             Offset.zero;
@@ -3022,7 +3030,8 @@ class CursorModel with ChangeNotifier {
     final size = parent.target?.canvasModel.getSize() ??
         MediaQueryData.fromView(ui.window).size;
     final xoffset = parent.target?.canvasModel.x ?? 0;
-    final yoffset = parent.target?.canvasModel.y ?? 0;
+    // NelDesk: the visible area starts below the top key bar.
+    final yoffset = (parent.target?.canvasModel.y ?? 0) - CanvasModel.nelTopInset;
     final scale = parent.target?.canvasModel.scale ?? 1;
     final x0 = _displayOriginX - xoffset / scale;
     final y0 = _displayOriginY - yoffset / scale;
@@ -3039,7 +3048,9 @@ class CursorModel with ChangeNotifier {
     final size = parent.target?.canvasModel.getSize() ??
         MediaQueryData.fromView(ui.window).size;
     final xoffset = (_displayOriginX - _x) * scale + size.width * 0.5;
-    final yoffset = (_displayOriginY - _y) * scale + size.height * 0.5;
+    final yoffset = (_displayOriginY - _y) * scale +
+        size.height * 0.5 +
+        CanvasModel.nelTopInset;
     return Offset(xoffset, yoffset);
   }
 
