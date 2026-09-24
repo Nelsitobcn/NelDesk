@@ -73,6 +73,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final keyboardVisibilityController = KeyboardVisibilityController();
   late final StreamSubscription<bool> keyboardSubscription;
   Worker? _nelKeyBarWorker;
+  // NelDesk: when the app went to the background, to decide on reconnecting.
+  DateTime? _nelPausedAt;
+  Timer? _nelForgetViewTimer;
+  // iOS keeps the connection alive ~30 s through the background task
+  // (AppDelegate.swift). Away longer than this, the socket is most likely dead:
+  // reconnect right away instead of waiting for the timeout.
+  static const _kNelReconnectAfter = Duration(seconds: 25);
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
@@ -117,6 +124,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         .changeCurrentKey(MessageKey(widget.id, ChatModel.clientModeID));
     _blockableOverlayState.applyFfi(gFFI);
     gFFI.imageModel.addCallbackOnFirstImage((String peerId) {
+      gFFI.canvasModel.nelRestoreView();
       gFFI.recordingModel
           .updateStatus(bind.sessionGetIsRecording(sessionId: gFFI.sessionId));
       if (gFFI.recordingModel.start) {
@@ -132,6 +140,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
     _nelKeyBarWorker?.dispose();
+    _nelForgetViewTimer?.cancel();
     CanvasModel.nelTopInset = 0;
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
@@ -164,12 +173,34 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       // Key-ups may have been lost while we were away (NelDesk "mute key").
       if (isIOS) gFFI.inputModel.releaseAllPressedKeys();
       _restoreInputOnResume();
+      if (isIOS) _nelReconnectIfAwayTooLong();
     } else if (isIOS &&
         (state == AppLifecycleState.inactive ||
             state == AppLifecycleState.hidden ||
             state == AppLifecycleState.paused)) {
       // iPadOS will not deliver the key-up of the shortcut that took us away.
       gFFI.inputModel.releaseAllPressedKeys();
+      if (state != AppLifecycleState.inactive && _nelPausedAt == null) {
+        _nelPausedAt = DateTime.now();
+        _nelForgetViewTimer?.cancel();
+        gFFI.canvasModel.nelSaveView();
+      }
+    }
+  }
+
+  void _nelReconnectIfAwayTooLong() {
+    final pausedAt = _nelPausedAt;
+    _nelPausedAt = null;
+    if (pausedAt == null) return;
+    final away = DateTime.now().difference(pausedAt);
+    if (away >= _kNelReconnectAfter && gFFI.ffiModel.pi.isSet.isTrue) {
+      gFFI.ffiModel.reconnect(gFFI.dialogManager, sessionId, false);
+    } else {
+      // Still connected: keep the saved view only in case the connection
+      // turns out to be dead and RustDesk reconnects by itself.
+      _nelForgetViewTimer?.cancel();
+      _nelForgetViewTimer =
+          Timer(const Duration(seconds: 60), gFFI.canvasModel.nelForgetView);
     }
   }
 

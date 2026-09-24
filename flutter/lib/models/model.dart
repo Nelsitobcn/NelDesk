@@ -2168,6 +2168,25 @@ class CanvasModel with ChangeNotifier {
   Offset? _offsetBeforeMobileSoftKeyboard;
   double? _scaleBeforeMobileSoftKeyboard;
 
+  // NelDesk: zoom/position saved when leaving the app, restored after an
+  // automatic reconnect (which otherwise resets the view to "fit").
+  ({double scale, double x, double y})? _nelSavedView;
+
+  void nelSaveView() => _nelSavedView = (scale: _scale, x: _x, y: _y);
+
+  void nelForgetView() => _nelSavedView = null;
+
+  void nelRestoreView() {
+    final v = _nelSavedView;
+    if (v == null) return;
+    _nelSavedView = null;
+    _scale = v.scale;
+    _x = v.x;
+    _y = v.y;
+    isMobileCanvasChanged = true;
+    notifyListeners();
+  }
+
   // `isMobileCanvasChanged` is used to avoid canvas reset when changing the input method
   // after showing the soft keyboard.
   bool isMobileCanvasChanged = false;
