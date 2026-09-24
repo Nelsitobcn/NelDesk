@@ -141,7 +141,7 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
       child: TextButton(
         style: TextButton.styleFrom(
           minimumSize: const Size(44, 34),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
           backgroundColor:
@@ -156,7 +156,7 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
     );
   }
 
-  Widget _sep() => const SizedBox(width: 10);
+  Widget _sep() => const SizedBox(width: 6);
 
   @override
   Widget build(BuildContext context) {
@@ -167,9 +167,10 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
         // The text shows up on the Mac as it is typed; the button only
         // tells whether the mic is on (Nelson, 24-sep-2026).
         final on = NelDictation.listening.value;
-        return _btn(on ? '● Escuchando (toca para parar)' : '🎤 Dictar',
-            NelDictation.toggle,
-            color: on ? const Color(0xCCD32F2F) : const Color(0x6600A86B));
+        // Icon only: a text label pushed the last keys under the hide arrow.
+        return _btn('', NelDictation.toggle,
+            icon: on ? Icons.mic : Icons.mic_none,
+            color: on ? const Color(0xFFD32F2F) : const Color(0x6600A86B));
       }),
       _sep(),
       _btn('Esc', () => _key('VK_ESCAPE')),
