@@ -338,6 +338,8 @@ class InputModel {
 
   final ToReleaseRawKeys toReleaseRawKeys = ToReleaseRawKeys();
   final ToReleaseKeys toReleaseKeys = ToReleaseKeys();
+  // NelDesk: usbHid codes sent as pressed (iOS map mode) and not released yet.
+  final Set<int> _nelKeysDown = {};
 
   // trackpad
   var _trackpadLastDelta = Offset.zero;
@@ -757,6 +759,14 @@ class InputModel {
     final isDesktopAndMapMode =
         isDesktop || (isWebDesktop && keyboardMode == kKeyMapMode);
     if (isMobileAndMapMode || isDesktopAndMapMode) {
+      if (isIOS) {
+        final usbHid = e.physicalKey.usbHidUsage & 0xFFFF;
+        if (e is KeyUpEvent) {
+          _nelKeysDown.remove(usbHid);
+        } else {
+          _nelKeysDown.add(usbHid);
+        }
+      }
       // FIXME: e.character is wrong for dead keys, eg: ^ in de
       newKeyboardMode(
           e.character ?? '',
@@ -955,6 +965,21 @@ class InputModel {
   /// Reset key modifiers to false, including [shift], [ctrl], [alt] and [command].
   void resetModifiers() {
     shift = ctrl = alt = command = false;
+  }
+
+  /// NelDesk: send key-up to the peer for every key it still thinks is down.
+  /// iPadOS swallows the key-up when the app loses focus through a system
+  /// shortcut (Cmd+Tab, Cmd+Space, Globe...). The Mac then keeps Cmd/Alt
+  /// pressed, letters turn into shortcuts ("mute key") and AppKit may crash in
+  /// NSMenu performKeyEquivalent with an event that carries no characters.
+  void releaseAllPressedKeys() {
+    toReleaseKeys.release(handleKeyEvent);
+    for (final usbHid in _nelKeysDown.toList()) {
+      newKeyboardMode('', usbHid, false, false);
+    }
+    _nelKeysDown.clear();
+    toReleaseKeys.reset();
+    resetModifiers();
   }
 
   /// Modify the given modifier map [evt] based on current modifier key status.

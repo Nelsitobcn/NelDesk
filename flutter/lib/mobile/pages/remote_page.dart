@@ -24,6 +24,7 @@ import '../../models/platform_model.dart';
 import '../../utils/image.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
+import '../widgets/nel_key_bar.dart';
 
 final initText = '1' * 1024;
 
@@ -71,6 +72,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   final keyboardVisibilityController = KeyboardVisibilityController();
   late final StreamSubscription<bool> keyboardSubscription;
+  Worker? _nelKeyBarWorker;
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
@@ -103,6 +105,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           .showLoading(translate('Connecting...'), onCancel: closeConnection);
     });
     WakelockManager.enable(_uniqueKey);
+    CanvasModel.nelTopInset = NelKeyBar.visible.value ? NelKeyBar.height : 0;
+    _nelKeyBarWorker =
+        ever(NelKeyBar.visible, (_) => NelKeyBar.applyCanvasInset());
     _physicalFocusNode.requestFocus();
     gFFI.inputModel.listenToMouse(true);
     gFFI.qualityMonitorModel.checkShowQualityMonitor(sessionId);
@@ -126,6 +131,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    _nelKeyBarWorker?.dispose();
+    CanvasModel.nelTopInset = 0;
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
@@ -154,7 +161,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       trySyncClipboard();
+      // Key-ups may have been lost while we were away (NelDesk "mute key").
+      if (isIOS) gFFI.inputModel.releaseAllPressedKeys();
       _restoreInputOnResume();
+    } else if (isIOS &&
+        (state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused)) {
+      // iPadOS will not deliver the key-up of the shortcut that took us away.
+      gFFI.inputModel.releaseAllPressedKeys();
     }
   }
 
@@ -641,6 +656,16 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               ffi: gFFI,
             ));
           }
+          paints.add(Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Obx(() => NelKeyBar.visible.value
+                ? const NelKeyBarWidget()
+                : const Align(
+                    alignment: Alignment.topCenter,
+                    child: NelKeyBarShowTab())),
+          ));
           return paints;
         }()));
   }
