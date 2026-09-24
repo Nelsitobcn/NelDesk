@@ -4,6 +4,7 @@
 // Cmd+Tab and Cmd+Space for itself, so they are offered here as buttons.
 // Modifiers are one-shot: tap "Cmd" then "Tab" sends Cmd+Tab and Cmd turns off.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../../common.dart';
@@ -31,6 +32,79 @@ class NelKeyBar {
     if (CanvasModel.nelTopInset != inset) {
       CanvasModel.nelTopInset = inset;
       gFFI.canvasModel.updateViewStyle();
+    }
+  }
+}
+
+/// Continuous dictation (native side: NelDictation in ios/Runner/AppDelegate.swift).
+/// Tap to start listening, tap again to stop. Words are typed on the remote
+/// computer as soon as the recognizer settles them (all but the word being
+/// spoken); if it later revises typed text, it is erased and retyped.
+/// The phrase is completed after a short pause.
+class NelDictation {
+  static const _channel = MethodChannel('neldesk/dictation');
+  static final RxBool listening = false.obs;
+  static var _handlerSet = false;
+  // Text of the current phrase already typed on the remote computer.
+  static var _typed = '';
+
+  static void _sync(String target) {
+    final a = _typed.runes.toList();
+    final b = target.runes.toList();
+    var k = 0;
+    while (k < a.length && k < b.length && a[k] == b[k]) {
+      k++;
+    }
+    for (var i = k; i < a.length; i++) {
+      // Plain backspace: a modifier left on in the bar would turn it into
+      // Cmd+Backspace (delete the whole line).
+      bind.sessionInputKey(
+          sessionId: gFFI.sessionId,
+          name: 'VK_BACK',
+          down: false,
+          press: true,
+          alt: false,
+          ctrl: false,
+          shift: false,
+          command: false);
+    }
+    if (k < b.length) {
+      bind.sessionInputString(
+          sessionId: gFFI.sessionId, value: String.fromCharCodes(b.sublist(k)));
+    }
+    _typed = target;
+  }
+
+  static void _ensureHandler() {
+    if (_handlerSet) return;
+    _handlerSet = true;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'partial') {
+        final t = call.arguments as String? ?? '';
+        // Type every word but the last one, which may still change.
+        final cut = t.lastIndexOf(' ');
+        if (cut > 0) _sync(t.substring(0, cut + 1));
+      } else if (call.method == 'phrase') {
+        final t = (call.arguments as String? ?? '').trim();
+        if (t.isNotEmpty) _sync('$t ');
+        _typed = '';
+      }
+    });
+  }
+
+  static Future<void> toggle() async {
+    _ensureHandler();
+    if (listening.value) {
+      await _channel.invokeMethod('stop');
+      listening.value = false;
+      return;
+    }
+    try {
+      _typed = '';
+      await _channel.invokeMethod('start');
+      listening.value = true;
+    } on PlatformException catch (e) {
+      showToast(e.message ?? 'No se pudo empezar a dictar');
     }
   }
 }
@@ -89,6 +163,15 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
     final isMac = gFFI.ffiModel.pi.platform == kPeerPlatformMacOS;
     final cmdLabel = isMac ? '⌘ Cmd' : 'Win';
     final children = <Widget>[
+      Obx(() {
+        // The text shows up on the Mac as it is typed; the button only
+        // tells whether the mic is on (Nelson, 24-sep-2026).
+        final on = NelDictation.listening.value;
+        return _btn(on ? '● Escuchando (toca para parar)' : '🎤 Dictar',
+            NelDictation.toggle,
+            color: on ? const Color(0xCCD32F2F) : const Color(0x6600A86B));
+      }),
+      _sep(),
       _btn('Esc', () => _key('VK_ESCAPE')),
       _btn('Tab', () => _key('VK_TAB')),
       _sep(),
@@ -125,6 +208,7 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
         _btn('⌘Z', () => _combo('VK_Z', command: true)),
         _sep(),
       ],
+      _sep(),
       _btn('Soltar teclas', () {
         inputModel.releaseAllPressedKeys();
         setState(() {});

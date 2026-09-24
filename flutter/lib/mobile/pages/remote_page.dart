@@ -140,6 +140,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
     _nelKeyBarWorker?.dispose();
+    if (NelDictation.listening.value) NelDictation.toggle();
     _nelForgetViewTimer?.cancel();
     CanvasModel.nelTopInset = 0;
     // https://github.com/flutter/flutter/issues/64935
@@ -180,6 +181,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
             state == AppLifecycleState.paused)) {
       // iPadOS will not deliver the key-up of the shortcut that took us away.
       gFFI.inputModel.releaseAllPressedKeys();
+      if (state != AppLifecycleState.inactive && NelDictation.listening.value) {
+        NelDictation.toggle();
+      }
       if (state != AppLifecycleState.inactive && _nelPausedAt == null) {
         _nelPausedAt = DateTime.now();
         _nelForgetViewTimer?.cancel();
