@@ -172,6 +172,21 @@ class _NelKeyBarWidgetState extends State<NelKeyBarWidget> {
             icon: on ? Icons.mic : Icons.mic_none,
             color: on ? const Color(0xFFD32F2F) : const Color(0x6600A86B));
       }),
+      if (isMac)
+        // Ctrl+Alt+Cmd+P: NelDesk/mac-pantalla-ipad/modo_pantalla (LaunchAgent)
+        // toggles the Mac between "iPad mode" (monitors mirror the iPad-shaped
+        // virtual screen) and "Mac mode" (the monitors as usual).
+        _btn('iPad⇄Mac', () {
+          bind.sessionInputKey(
+              sessionId: gFFI.sessionId,
+              name: 'VK_P',
+              down: false,
+              press: true,
+              alt: true,
+              ctrl: true,
+              shift: false,
+              command: true);
+        }),
       _sep(),
       _btn('Esc', () => _key('VK_ESCAPE')),
       _btn('Tab', () => _key('VK_TAB')),
